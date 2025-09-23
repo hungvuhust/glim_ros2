@@ -3,7 +3,8 @@
 
 namespace glim {
 
-static bool init_qos_profile(const std::string& name, rmw_qos_profile_t& profile) {
+static bool init_qos_profile(const std::string& name,
+                             rmw_qos_profile_t& profile) {
   bool found = true;
   if (name == "default") {
     profile = rmw_qos_profile_default;
@@ -19,29 +20,35 @@ static bool init_qos_profile(const std::string& name, rmw_qos_profile_t& profile
     profile = rmw_qos_profile_parameter_events;
   } else {
     profile = rmw_qos_profile_default;
-    found = false;
+    found   = false;
   }
   return found;
 }
 
-static bool get_qos(const Config& config_ros, const std::string& module_name, const std::string& param_name, std::string& profile_name, rclcpp::QoS& qos) {
-  bool is_configured = false;
-  rmw_qos_profile_t profile;
+static bool get_qos(const Config&      config_ros,
+                    const std::string& module_name,
+                    const std::string& param_name,
+                    std::string&       profile_name,
+                    rclcpp::QoS&       qos) {
+  bool                     is_configured = false;
+  rmw_qos_profile_t        profile;
   std::vector<std::string> module_path;
 
   module_path.push_back(module_name);
   module_path.push_back(param_name);
 
-  auto profile_param = config_ros.param_nested<std::string>(module_path, "profile");
+  auto profile_param =
+    config_ros.param_nested<std::string>(module_path, "profile");
   if (profile_param.has_value()) {
-    profile_name = profile_param.value();
+    profile_name  = profile_param.value();
     is_configured = true;
   } else {
     profile_name = "sensor_data";
   }
 
   if (!init_qos_profile(profile_name, profile)) {
-    spdlog::warn("unknown QoS profile '{}', falling back to 'default'.", profile_name);
+    spdlog::warn("unknown QoS profile '{}', falling back to 'default'.",
+                 profile_name);
   }
 
   auto depth = config_ros.param_nested<int>(module_path, "depth");
@@ -57,7 +64,7 @@ static bool get_qos(const Config& config_ros, const std::string& module_name, co
       spdlog::warn("ignoring unknown durability policy '{}'.", str.value());
     } else {
       profile.durability = value;
-      is_configured = true;
+      is_configured      = true;
     }
   }
 
@@ -68,7 +75,7 @@ static bool get_qos(const Config& config_ros, const std::string& module_name, co
       spdlog::warn("ignoring unknown reliability policy '{}'.", str.value());
     } else {
       profile.reliability = value;
-      is_configured = true;
+      is_configured       = true;
     }
   }
 
@@ -79,7 +86,7 @@ static bool get_qos(const Config& config_ros, const std::string& module_name, co
       spdlog::warn("ignoring unknown history policy '{}'.", str.value());
     } else {
       profile.history = value;
-      is_configured = true;
+      is_configured   = true;
     }
   }
 
@@ -87,11 +94,15 @@ static bool get_qos(const Config& config_ros, const std::string& module_name, co
   return is_configured;
 }
 
-rclcpp::QoS get_qos_settings(const Config& config_ros, const std::string& module_name, const std::string& param_name, const std::optional<rclcpp::QoS>& default_qos) {
+rclcpp::QoS get_qos_settings(const Config&                     config_ros,
+                             const std::string&                module_name,
+                             const std::string&                param_name,
+                             const std::optional<rclcpp::QoS>& default_qos) {
   std::string profile_name;
   rclcpp::QoS qos{0};
 
-  if (!get_qos(config_ros, module_name, param_name, profile_name, qos) && default_qos.has_value()) {
+  if (!get_qos(config_ros, module_name, param_name, profile_name, qos) &&
+      default_qos.has_value()) {
     qos = default_qos.value();
   }
 

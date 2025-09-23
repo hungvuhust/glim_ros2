@@ -35,11 +35,13 @@ public:
   RvizViewer();
   ~RvizViewer();
 
-  virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override;
+  virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(
+    rclcpp::Node& node) override;
 
 private:
   void set_callbacks();
-  void odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, bool corrected);
+  void odometry_new_frame(const EstimationFrame::ConstPtr& new_frame,
+                          bool                             corrected);
   void globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
   void invoke(const std::function<void()>& task);
 
@@ -47,10 +49,10 @@ private:
 
 private:
   std::atomic_bool kill_switch;
-  std::thread thread;
+  std::thread      thread;
 
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer;
-  std::unique_ptr<tf2_ros::TransformListener> tf_listener;
+  std::unique_ptr<tf2_ros::Buffer>               tf_buffer;
+  std::unique_ptr<tf2_ros::TransformListener>    tf_listener;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
 
   rclcpp::Time last_globalmap_pub_time;
@@ -60,28 +62,33 @@ private:
   std::string base_frame_id;
   std::string odom_frame_id;
   std::string map_frame_id;
-  bool publish_imu2lidar;
-  double tf_time_offset;
+  bool        publish_imu2lidar;
+  double      tf_time_offset;
 
   std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> points_pub;
-  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> aligned_points_pub;
+  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>>
+    aligned_points_pub;
   std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> map_pub;
 
-  std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odom_pub;
+  std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>>         odom_pub;
   std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PoseStamped>> pose_pub;
 
-  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> points_corrected_pub;
-  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> aligned_points_corrected_pub;
+  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>>
+    points_corrected_pub;
+  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>>
+    aligned_points_corrected_pub;
 
-  std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odom_corrected_pub;
-  std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PoseStamped>> pose_corrected_pub;
+  std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>>
+    odom_corrected_pub;
+  std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PoseStamped>>
+    pose_corrected_pub;
 
-  std::mutex trajectory_mutex;
+  std::mutex                         trajectory_mutex;
   std::unique_ptr<TrajectoryManager> trajectory;
 
   std::vector<gtsam_points::PointCloud::ConstPtr> submaps;
 
-  std::mutex invoke_queue_mutex;
+  std::mutex                         invoke_queue_mutex;
   std::vector<std::function<void()>> invoke_queue;
 
   // Logging
