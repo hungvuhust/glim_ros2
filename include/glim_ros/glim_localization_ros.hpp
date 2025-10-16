@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>

@@ -83,17 +83,20 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
 
   logger->info("config_path: {}", config_path);
   glim::GlobalConfig::instance(config_path);
-  glim::Config config_ros(glim::GlobalConfig::get_config_path("config_ros"));
+  glim::Config config_loc_ros(
+    glim::GlobalConfig::get_config_path("config_localization_ros"));
 
-  keep_raw_points =
-    config_ros.param<bool>("glim_localization_ros", "keep_raw_points", false);
-  imu_time_offset =
-    config_ros.param<double>("glim_localization_ros", "imu_time_offset", 0.0);
-  points_time_offset = config_ros.param<double>("glim_localization_ros",
-                                                "points_time_offset",
-                                                0.0);
+  keep_raw_points    = config_loc_ros.param<bool>("glim_localization_ros",
+                                               "keep_raw_points",
+                                               false);
+  imu_time_offset    = config_loc_ros.param<double>("glim_localization_ros",
+                                                 "imu_time_offset",
+                                                 0.0);
+  points_time_offset = config_loc_ros.param<double>("glim_localization_ros",
+                                                    "points_time_offset",
+                                                    0.0);
   acc_scale =
-    config_ros.param<double>("glim_localization_ros", "acc_scale", 1.0);
+    config_loc_ros.param<double>("glim_localization_ros", "acc_scale", 1.0);
 
   glim::Config config_sensors(
     glim::GlobalConfig::get_config_path("config_sensors"));
@@ -111,8 +114,8 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
     throw std::runtime_error("global_map_path parameter is required");
   }
 
-  // Auto initial pose (use identity if true)
-  this->declare_parameter<bool>("auto_initial_pose", false);
+  // Auto initial pose (always use identity for immediate start)
+  this->declare_parameter<bool>("auto_initial_pose", true);
   this->get_parameter<bool>("auto_initial_pose", auto_initial_pose);
 
   // Preprocessing
@@ -129,7 +132,7 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
   spdlog::info("load {}", localization_so_name);
 
   std::shared_ptr<glim::LocalizationBase> loc =
-    LocalizationBase::load_module(localization_so_name);
+    glim::LocalizationBase::load_module(localization_so_name);
   if (!loc) {
     spdlog::critical("failed to load localization module");
     throw std::runtime_error("Failed to load localization module");
@@ -146,20 +149,24 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
   }
   spdlog::info("Global map loaded successfully");
 
-  // Set initial pose if auto mode
+  // Always set initial pose for immediate start
   if (auto_initial_pose) {
-    spdlog::info("Using identity as initial pose (auto mode)");
+    spdlog::info("Using identity as initial pose (auto mode enabled)");
     if (!localization->set_initial_pose(Eigen::Isometry3d::Identity())) {
       spdlog::critical("failed to set initial pose");
       throw std::runtime_error("Failed to set initial pose");
     }
     localization_initialized = true;
+  } else {
+    spdlog::info(
+      "Manual initial pose mode - localization will start after receiving "
+      "initial pose");
   }
 
   // Extension modules
   const auto extensions =
-    config_ros.param<std::vector<std::string>>("glim_localization_ros",
-                                               "extension_modules");
+    config_loc_ros.param<std::vector<std::string>>("glim_localization_ros",
+                                                   "extension_modules");
   if (extensions && !extensions->empty()) {
     for (const auto& extension : *extensions) {
       spdlog::info("load extension {}", extension);
@@ -183,29 +190,33 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
   // ROS-related
   using std::placeholders::_1;
   const std::string imu_topic =
-    config_ros.param<std::string>("glim_localization_ros", "imu_topic", "/imu");
+    config_loc_ros.param<std::string>("glim_localization_ros",
+                                      "imu_topic",
+                                      "/imu");
   const std::string points_topic =
-    config_ros.param<std::string>("glim_localization_ros",
-                                  "points_topic",
-                                  "/points");
+    config_loc_ros.param<std::string>("glim_localization_ros",
+                                      "points_topic",
+                                      "/points");
   const std::string image_topic =
-    config_ros.param<std::string>("glim_localization_ros", "image_topic", "");
+    config_loc_ros.param<std::string>("glim_localization_ros",
+                                      "image_topic",
+                                      "");
   const std::string initial_pose_topic =
-    config_ros.param<std::string>("glim_localization_ros",
-                                  "initial_pose_topic",
-                                  "/initialpose");
+    config_loc_ros.param<std::string>("glim_localization_ros",
+                                      "initial_pose_topic",
+                                      "/initialpose");
 
   // Subscribers
   rclcpp::SensorDataQoS default_imu_qos;
   default_imu_qos.get_rmw_qos_profile().depth = 1000;
-  auto qos                                    = get_qos_settings(config_ros,
+  auto qos                                    = get_qos_settings(config_loc_ros,
                               "glim_localization_ros",
                               "imu_qos",
                               default_imu_qos);
   imu_sub = this->create_subscription<sensor_msgs::msg::Imu>(
     imu_topic, qos, std::bind(&GlimLocalizationROS::imu_callback, this, _1));
 
-  qos = get_qos_settings(config_ros, "glim_localization_ros", "points_qos");
+  qos = get_qos_settings(config_loc_ros, "glim_localization_ros", "points_qos");
   points_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
     points_topic,
     qos,
@@ -220,7 +231,8 @@ GlimLocalizationROS::GlimLocalizationROS(const rclcpp::NodeOptions& options)
 
 #ifdef BUILD_WITH_CV_BRIDGE
   if (!image_topic.empty()) {
-    qos = get_qos_settings(config_ros, "glim_localization_ros", "image_qos");
+    qos =
+      get_qos_settings(config_loc_ros, "glim_localization_ros", "image_qos");
     image_sub = image_transport::create_subscription(
       this,
       image_topic,
@@ -328,13 +340,7 @@ size_t GlimLocalizationROS::points_callback(
                 msg->header.stamp.sec,
                 msg->header.stamp.nanosec);
 
-  if (!localization_initialized) {
-    spdlog::warn_once(
-      "Localization not initialized. Please set initial pose via {} topic",
-      initial_pose_sub->get_topic_name());
-    return 0;
-  }
-
+  // Skip initialization check - process points immediately
   auto raw_points = glim::extract_raw_points(*msg, intensity_field, ring_field);
   if (raw_points == nullptr) {
     spdlog::warn("failed to extract points from message");
