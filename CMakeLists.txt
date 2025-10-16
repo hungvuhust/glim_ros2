@@ -8,9 +8,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-option(BUILD_WITH_CUDA "Build with GPU support" ON)
+option(BUILD_WITH_CUDA "Build with GPU support" OFF)
 option(BUILD_WITH_VIEWER "Build with visualizer" ON)
-option(BUILD_WITH_CV_BRIDGE "Build with cv_bridge which enables support for processing of camera images" ON)
+option(BUILD_WITH_CV_BRIDGE "Build with cv_bridge which enables support for processing of camera images" OFF)
 
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
@@ -51,6 +51,19 @@ target_link_libraries(glim_ros
 )
 rclcpp_components_register_nodes(glim_ros "glim::GlimROS")
 
+### glim_localization_ros ###
+ament_auto_add_library(glim_localization_ros SHARED
+  src/glim_ros/glim_localization_ros.cpp
+  src/glim_ros/ros_qos.cpp
+)
+target_include_directories(glim_localization_ros PUBLIC
+  include
+)
+target_link_libraries(glim_localization_ros
+  glim::glim
+)
+rclcpp_components_register_nodes(glim_localization_ros "glim::GlimLocalizationROS")
+
 ament_auto_add_library(rviz_viewer SHARED
   src/glim_ros/rviz_viewer.cpp
 )
@@ -61,6 +74,14 @@ ament_auto_add_executable(glim_rosnode
 )
 target_link_libraries(glim_rosnode
   glim_ros
+)
+
+### glim_localization_rosnode ###
+ament_auto_add_executable(glim_localization_rosnode
+  src/glim_localization_rosnode.cpp
+)
+target_link_libraries(glim_localization_rosnode
+  glim_localization_ros
 )
 
 ### glim_rosbag ###
