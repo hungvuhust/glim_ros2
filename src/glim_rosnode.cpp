@@ -1,15 +1,15 @@
 #include <iostream>
-#include <spdlog/spdlog.h>
 #include <rclcpp/rclcpp.hpp>
+#include <spdlog/spdlog.h>
 
-#include <glim_ros/glim_ros.hpp>
 #include <glim/util/config.hpp>
 #include <glim/util/extension_module_ros2.hpp>
+#include <glim_ros/glim_ros.hpp>
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   rclcpp::executors::SingleThreadedExecutor exec;
-  rclcpp::NodeOptions options;
+  rclcpp::NodeOptions                       options;
 
   auto glim = std::make_shared<glim::GlimROS>(options);
 
