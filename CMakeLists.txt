@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(glim_ros VERSION 1.1.0 LANGUAGES CXX)
+project(glim_ros VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -16,8 +16,20 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 find_package(glim REQUIRED)
-find_package(Boost REQUIRED COMPONENTS program_options)
+find_package(Boost REQUIRED COMPONENTS program_options iostreams)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+# ---- FIX for packages that expect libusb::libusb target ----
+if(NOT TARGET libusb::libusb)
+  add_library(libusb::libusb INTERFACE IMPORTED)
+  set_target_properties(libusb::libusb PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${LIBUSB_INCLUDE_DIRS}"
+    INTERFACE_LINK_LIBRARIES "${LIBUSB_LIBRARIES}"
+  )
+endif()
 
+
+find_package(VTK REQUIRED)
 if(DEFINED GLIM_USE_OPENCV AND NOT GLIM_USE_OPENCV AND BUILD_WITH_CV_BRIDGE)
   message(WARNING "BUILD_WITH_CV_BRIDGE is disabled because glim is not built with OpenCV.")
   set(BUILD_WITH_CV_BRIDGE OFF CACHE BOOL "glim is not built with OpenCV" FORCE)
@@ -45,9 +57,13 @@ ament_auto_add_library(glim_ros SHARED
 )
 target_include_directories(glim_ros PUBLIC
   include
+  ${LIBUSB_INCLUDE_DIRS}
+  ${VTK_INCLUDE_DIRS}
 )
 target_link_libraries(glim_ros
   glim::glim
+  ${LIBUSB_LIBRARIES}
+  ${VTK_LIBRARIES}
 )
 rclcpp_components_register_nodes(glim_ros "glim::GlimROS")
 
@@ -90,6 +106,7 @@ if(BUILD_WITH_VIEWER)
   target_link_libraries(offline_viewer
     glim::interactive_viewer
     Boost::program_options
+    ${LIBUSB_LIBRARIES}
   )
 
   ### map_editor ###
@@ -99,6 +116,7 @@ if(BUILD_WITH_VIEWER)
   target_link_libraries(map_editor
     glim::map_editor
     Boost::program_options
+    ${LIBUSB_LIBRARIES}
   )
 endif()
 
