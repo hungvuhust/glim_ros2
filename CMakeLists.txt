@@ -120,4 +120,9 @@ if(BUILD_WITH_VIEWER)
   )
 endif()
 
+install(DIRECTORY include/ 
+  DESTINATION include/${PROJECT_NAME}
+)
+
+
 ament_auto_package()
