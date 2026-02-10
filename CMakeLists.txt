@@ -79,13 +79,7 @@ target_link_libraries(glim_rosnode
   glim_ros
 )
 
-### glim_rosbag ###
-ament_auto_add_executable(glim_rosbag
-  src/glim_rosbag.cpp
-)
-target_link_libraries(glim_rosbag
-  glim_ros
-)
+
 
 ### validator_node ###
 ament_auto_add_executable(validator_node
@@ -109,15 +103,7 @@ if(BUILD_WITH_VIEWER)
     ${LIBUSB_LIBRARIES}
   )
 
-  ### map_editor ###
-  ament_auto_add_executable(map_editor
-    src/map_editor.cpp
-  )
-  target_link_libraries(map_editor
-    glim::map_editor
-    Boost::program_options
-    ${LIBUSB_LIBRARIES}
-  )
+
 endif()
 
 install(DIRECTORY include/ 

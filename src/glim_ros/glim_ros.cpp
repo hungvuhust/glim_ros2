@@ -28,7 +28,7 @@
 #include <glim/odometry/async_odometry_estimation.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
 #include <glim/util/config.hpp>
-#include <glim/util/debug.hpp>
+// #include <glim/util/debug.hpp>
 #include <glim/util/extension_module.hpp>
 #include <glim/util/extension_module_ros2.hpp>
 #include <glim/util/logging.hpp>
@@ -57,7 +57,7 @@ GlimROS::GlimROS(const rclcpp::NodeOptions &options)
     logger->sinks().push_back(file_sink);
     logger->set_level(spdlog::level::trace);
 
-    print_system_info(logger);
+    // print_system_info(logger);
   }
 
   dump_on_unload = false;
@@ -304,7 +304,7 @@ size_t GlimROS::points_callback(
   spdlog::trace("points: {}.{}", msg->header.stamp.sec,
                 msg->header.stamp.nanosec);
 
-  auto raw_points = glim::extract_raw_points(*msg, intensity_field, ring_field);
+  auto raw_points = glim::extract_raw_points(*msg, intensity_field);
   if (raw_points == nullptr) {
     spdlog::warn("failed to extract points from message");
     return 0;
@@ -403,9 +403,6 @@ void GlimROS::wait(bool auto_quit) {
 void GlimROS::save(const std::string &path) {
   if (global_mapping)
     global_mapping->save(path);
-  for (auto &module : extension_modules) {
-    module->at_exit(path);
-  }
 }
 
 } // namespace glim
