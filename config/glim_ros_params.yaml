@@ -1,0 +1,73 @@
+# GLIM ROS2 Parameters - SLAM Mode
+# This file contains ROS2-specific parameters for glim_ros node in SLAM mode
+
+glim_ros:
+  ros__parameters:
+    # ==================== Mode Configuration ====================
+    localization_mode: false  # Set to true for localization mode
+    # map_path: ""  # Required only in localization mode
+
+    # ==================== Backend Modules ====================
+    enable_local_mapping: true   # Enable sub-mapping
+    enable_global_mapping: true  # Enable global mapping
+
+    # ==================== Sensor Topics ====================
+    imu_topic: "/imu"
+    points_topic: "/velodyne_points"
+    image_topic: "/image"
+    wheel_topic: "/wheel_state"
+    gps_topic: "/gps/data"
+
+    # ==================== Time Offsets ====================
+    imu_time_offset: 0.0     # Time offset for IMU data (seconds)
+    points_time_offset: 0.0  # Time offset for point cloud data (seconds)
+    acc_scale: 1.0           # Accelerometer scale factor (set 9.80665 for Livox)
+
+    # ==================== TF Frames ====================
+    imu_frame_id: "imu"
+    lidar_frame_id: "velodyne"
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    map_frame_id: "map"
+
+    # ==================== TF Publishing ====================
+    publish_imu2lidar: false  # Publish imu->lidar TF
+    publish_topic_odom: true  # Publish odometry topic
+    tf_time_offset: 0.000001  # Time offset for TF (seconds)
+
+    # ==================== Data Management ====================
+    keep_raw_points: false  # Keep raw points (required for some extensions)
+
+    # ==================== Debug & Development ====================
+    debug: false          # Enable debug logging
+    dump_on_unload: false # Save map on shutdown
+
+    # ==================== Extension Modules ====================
+    # Extension modules to load (uncomment as needed)
+    extension_modules:
+      - "libmemory_monitor.so"
+      - "libstandard_viewer.so"
+      - "librviz_viewer.so"
+      # - "libglim_octomap.so"
+      # - "libimu_validator.so"
+
+    # ==================== RViz Visualization ====================
+    rviz_random_sampling_rate: 0.2  # Downsample rate for RViz visualization
+    publish_active_submaps: false   # Publish active submaps for visualization
+
+    # ==================== QoS Settings ====================
+    # QoS settings for subscribers (optional, uncomment to customize)
+    # imu_qos:
+    #   reliability: "reliable"
+    #   durability: "volatile"
+    #   depth: 1000
+    #
+    # points_qos:
+    #   reliability: "best_effort"
+    #   durability: "volatile"
+    #   depth: 10
+    #
+    # image_qos:
+    #   reliability: "best_effort"
+    #   durability: "volatile"
+    #   depth: 10

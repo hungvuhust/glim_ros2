@@ -1,0 +1,91 @@
+# GLIM ROS2 Parameters - Localization Mode
+# This file contains ROS2-specific parameters for glim_ros node in localization mode
+
+glim_ros:
+  ros__parameters:
+    # ==================== Mode Configuration ====================
+    localization_mode: true  # Enable localization mode
+    # map_path: "/home/hungvt14/glim_ws/map/map.ply"  # Set via launch file argument
+
+    # ==================== Backend Modules ====================
+    enable_local_mapping: true   # Enable sub-mapping (recommended for localization)
+    enable_global_mapping: true  # Required for localization
+
+    # ==================== Sensor Topics ====================
+    imu_topic: "/livox/imu"
+    points_topic: "/livox/lidar"
+    image_topic: "/image"
+    wheel_topic: "/wheel_state"
+    gps_topic: "/gps/fix"
+
+    # ==================== Time Offsets ====================
+    imu_time_offset: 0.0     # Time offset for IMU data (seconds)
+    points_time_offset: 0.0  # Time offset for point cloud data (seconds)
+    acc_scale: 9.81           # Accelerometer scale factor (set 9.80665 for Livox)
+
+    # ==================== TF Frames ====================
+    imu_frame_id: "livox_frame"
+    lidar_frame_id: "livox_frame"
+    base_frame_id: "livox_frame"
+    odom_frame_id: "odom"
+    map_frame_id: "map"
+
+    # ==================== TF Publishing ====================
+    publish_imu2lidar: false  # Publish imu->lidar TF
+    publish_topic_odom: true  # Publish odometry topic
+    tf_time_offset: 0.000001  # Time offset for TF (seconds)
+
+    # ==================== Data Management ====================
+    keep_raw_points: false  # Keep raw points (required for some extensions)
+
+    # ==================== Debug & Development ====================
+    debug: false          # Enable debug logging
+    dump_on_unload: false # Don't save map in localization mode
+
+    # ==================== Extension Modules ====================
+    # Extension modules for localization mode
+    extension_modules:
+      - "libmemory_monitor.so"
+      - "liblocalization_viewer.so"  # Use localization viewer instead of standard
+      - "librviz_viewer.so"
+      # - "libglim_octomap.so"
+      # - "libimu_validator.so"
+
+    # ==================== RViz Visualization ====================
+    rviz_random_sampling_rate: 0.2  # Downsample rate for RViz visualization
+    publish_active_submaps: true    # Publish active submaps to visualize localization
+
+    # ==================== Relocalization Settings ====================
+    # These parameters are used by the localization system
+    # Set initial_pose_topic to receive pose estimates from external sources
+    initial_pose_topic: "/initial_pose"  # Topic for manual relocalization
+
+    # ==================== QoS Settings ====================
+    # QoS settings for subscribers (optional, uncomment to customize)
+    # imu_qos:
+    #   reliability: "reliable"
+    #   durability: "volatile"
+    #   depth: 1000
+    #
+    # points_qos:
+    #   reliability: "best_effort"
+    #   durability: "volatile"
+    #   depth: 10
+    #
+    # image_qos:
+    #   reliability: "best_effort"
+    #   durability: "volatile"
+    #   depth: 10
+
+# ==================== Localization Algorithm Parameters ====================
+# These are loaded from glim package config files, but can be overridden here
+# Refer to LOCALIZATION_MODE.md for detailed explanations
+
+# localization:
+#   max_localization_distance: 5.0     # Maximum distance to search for pre-built maps (meters)
+#   min_localization_overlap: 0.15     # Minimum overlap score for successful localization
+#   linear_search_window: 8.0          # Linear search range for pose candidates (meters)
+#   angular_search_window: 0.15        # Angular search range for pose candidates (radians)
+#   num_keep_submaps: 3                # Number of active submaps to maintain in memory
+#   relocalization_factor_weight: 100.0  # Weight for relocalization constraints
+#   loc_between_factor_weight: 100.0     # Weight for between-frame factors

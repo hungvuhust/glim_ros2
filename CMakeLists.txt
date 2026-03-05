@@ -106,9 +106,29 @@ if(BUILD_WITH_VIEWER)
 
 endif()
 
-install(DIRECTORY include/ 
+install(DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
 )
+
+# Install launch files
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
+  FILES_MATCHING PATTERN "*.py"
+)
+
+# Install config files
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+  FILES_MATCHING PATTERN "*.yaml"
+)
+
+# Install RViz config files if they exist
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/rviz")
+  install(DIRECTORY rviz/
+    DESTINATION share/${PROJECT_NAME}/rviz
+    FILES_MATCHING PATTERN "*.rviz"
+  )
+endif()
 
 
 ament_auto_package()

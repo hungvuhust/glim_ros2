@@ -3,6 +3,7 @@
 #define GLIM_ROS2
 
 #include <boost/format.hpp>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <iostream>
@@ -25,9 +26,11 @@
 
 #include <glim/mapping/async_global_mapping.hpp>
 #include <glim/mapping/async_sub_mapping.hpp>
+#include <glim/mapping/localization.hpp>
 #include <glim/odometry/async_odometry_estimation.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
 #include <glim/util/config.hpp>
+#include <glim/viewer/viewer_callbacks.hpp>
 // #include <glim/util/debug.hpp>
 #include <glim/util/extension_module.hpp>
 #include <glim/util/extension_module_ros2.hpp>
@@ -40,7 +43,11 @@
 namespace glim {
 
 GlimROS::GlimROS(const rclcpp::NodeOptions &options)
-    : Node("glim_ros", options) {
+    : Node("glim_ros", options), localization_mode(false),
+      initial_pose_guess(Eigen::Isometry3d::Identity()),
+      pending_relocalization(false), prebuilt_map_loaded(false),
+      viewer_ready_counter(0), viewer_user_event_id(-1), viewer_load_map_id(-1),
+      viewer_relocalize_id(-1) {
   // Setup logger
   auto logger = spdlog::stdout_color_mt("glim");
   logger->sinks().push_back(get_ringbuffer_sink());
@@ -137,25 +144,17 @@ GlimROS::GlimROS(const rclcpp::NodeOptions &options)
     }
   }
 
-  // Global mapping
-  if (config_ros.param<bool>("glim_ros", "enable_global_mapping", true)) {
-    const std::string global_mapping_so_name =
-        glim::Config(
-            glim::GlobalConfig::get_config_path("config_global_mapping"))
-            .param<std::string>("global_mapping", "so_name",
-                                "libglobal_mapping.so");
-    if (!global_mapping_so_name.empty()) {
-      spdlog::info("load {}", global_mapping_so_name);
-      auto global = GlobalMappingBase::load_module(global_mapping_so_name);
-      if (global) {
-        global_mapping.reset(new AsyncGlobalMapping(global));
-      }
-    }
-  }
+  // Store localization mode flag
+  localization_mode =
+      config_ros.param<bool>("glim_ros", "localization_mode", false);
 
-  // Extention modules
-  const auto extensions = config_ros.param<std::vector<std::string>>(
-      "glim_ros", "extension_modules");
+  // Extention modules - Load BEFORE global mapping to ensure callbacks are
+  // registered This is critical for localization mode where pre-built map needs
+  // to notify viewers In localization mode, read from "localization" section to
+  // get localization-specific extensions
+  const std::string section = localization_mode ? "localization" : "glim_ros";
+  const auto        extensions =
+      config_ros.param<std::vector<std::string>>(section, "extension_modules");
   if (extensions && !extensions->empty()) {
     for (const auto &extension : *extensions) {
       if (extension.find("viewer") == std::string::npos &&
@@ -198,8 +197,65 @@ GlimROS::GlimROS(const rclcpp::NodeOptions &options)
     }
   }
 
+  // Global mapping or Localization - Initialize module
+  // In localization mode, map loading is deferred to timer_callback
+  if (config_ros.param<bool>("glim_ros", "enable_global_mapping", true)) {
+    std::string                        so_name;
+    std::shared_ptr<GlobalMappingBase> global;
+
+    if (localization_mode) {
+      // Localization mode - defer map loading to timer_callback
+      spdlog::info("Starting in localization mode");
+      so_name =
+          glim::Config(
+              glim::GlobalConfig::get_config_path("config_global_mapping"))
+              .param<std::string>("global_mapping", "localization_so_name",
+                                  "liblocalization.so");
+
+      // Store map path for deferred loading
+      pending_map_path =
+          config_ros.param<std::string>("glim_ros", "map_path", "");
+      if (pending_map_path.empty()) {
+        spdlog::critical(
+            "localization_mode is enabled but map_path is not set!");
+        abort();
+      }
+
+      if (pending_map_path[0] != '/') {
+        // map_path is relative to the glim directory
+        pending_map_path = ament_index_cpp::get_package_share_directory("glim") + "/" +
+                   pending_map_path;
+      }
+
+      spdlog::info("Pre-built map will be loaded from: {}", pending_map_path);
+      spdlog::info("load {}", so_name);
+
+      global = GlobalMappingBase::load_module(so_name);
+      if (global) {
+        // Don't load map here - will load in timer_callback after viewer ready
+        global_mapping.reset(new AsyncGlobalMapping(global));
+        spdlog::info("Localization module initialized, map loading deferred");
+      }
+    } else {
+      // Standard global mapping mode
+      so_name = glim::Config(glim::GlobalConfig::get_config_path(
+                                 "config_global_mapping"))
+                    .param<std::string>("global_mapping", "so_name",
+                                        "libglobal_mapping.so");
+
+      if (!so_name.empty()) {
+        spdlog::info("load {}", so_name);
+        global = GlobalMappingBase::load_module(so_name);
+        if (global) {
+          global_mapping.reset(new AsyncGlobalMapping(global));
+        }
+      }
+    }
+  }
+
   // ROS-related
   using std::placeholders::_1;
+  using std::placeholders::_2;
   const std::string imu_topic =
       config_ros.param<std::string>("glim_ros", "imu_topic", "");
   const std::string points_topic =
@@ -230,15 +286,54 @@ GlimROS::GlimROS(const rclcpp::NodeOptions &options)
     sub->create_subscriber(*this);
   }
 
+  // Localization mode ROS interfaces
+  if (localization_mode) {
+    // Subscribe to initial pose topic for manual relocalization
+    initial_pose_sub = this->create_subscription<
+        geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/initialpose", 10,
+        std::bind(&GlimROS::initial_pose_callback, this, _1));
+
+    // Create relocalization service
+    relocalization_service = this->create_service<std_srvs::srv::Trigger>(
+        "~/trigger_relocalization",
+        std::bind(&GlimROS::relocalization_callback, this, _1, _2));
+
+    spdlog::info("Localization mode services initialized");
+    spdlog::info("  - Subscribe to /initialpose for manual relocalization");
+    spdlog::info("  - Service ~/trigger_relocalization available");
+  }
+
   // Start timer
   timer = this->create_wall_timer(std::chrono::milliseconds(1),
                                   [this]() { timer_callback(); });
 
+  // Register ViewerCallbacks (for extension modules like localization_viewer)
+  viewer_user_event_id = ViewerCallbacks::user_event.add(
+      std::bind(&GlimROS::on_viewer_user_event, this, _1));
+  viewer_load_map_id = ViewerCallbacks::on_load_map.add(
+      std::bind(&GlimROS::on_viewer_load_map, this));
+  viewer_relocalize_id = ViewerCallbacks::request_relocalize.add(
+      std::bind(&GlimROS::on_viewer_request_relocalize, this, _1));
+
+  spdlog::debug("ViewerCallbacks registered");
   spdlog::debug("initialized");
 }
 
 GlimROS::~GlimROS() {
   spdlog::debug("quit");
+
+  // Unregister ViewerCallbacks
+  if (viewer_user_event_id >= 0) {
+    ViewerCallbacks::user_event.remove(viewer_user_event_id);
+  }
+  if (viewer_load_map_id >= 0) {
+    ViewerCallbacks::on_load_map.remove(viewer_load_map_id);
+  }
+  if (viewer_relocalize_id >= 0) {
+    ViewerCallbacks::request_relocalize.remove(viewer_relocalize_id);
+  }
+
   extension_modules.clear();
 
   if (dump_on_unload) {
@@ -347,9 +442,48 @@ void GlimROS::timer_callback() {
     }
   }
 
+  // Load pre-built map after viewer has had time to initialize
+  // Wait ~3 seconds (3000 timer ticks at 1ms interval) before loading
+  if (localization_mode && !prebuilt_map_loaded && !pending_map_path.empty()) {
+    viewer_ready_counter++;
+
+    if (viewer_ready_counter >= 3000) {  // 3 seconds
+      spdlog::info("Viewer initialization complete, loading pre-built map...");
+
+      if (global_mapping && global_mapping->load(pending_map_path)) {
+        spdlog::info("Successfully loaded pre-built map from: {}", pending_map_path);
+        prebuilt_map_loaded = true;
+      } else {
+        spdlog::error("Failed to load pre-built map from: {}", pending_map_path);
+        // Don't retry, just mark as loaded to avoid repeated attempts
+        prebuilt_map_loaded = true;
+      }
+    }
+  }
+
   std::vector<glim::EstimationFrame::ConstPtr> estimation_frames;
   std::vector<glim::EstimationFrame::ConstPtr> marginalized_frames;
   odometry_estimation->get_results(estimation_frames, marginalized_frames);
+
+  // Auto-trigger pending relocalization when frames become available
+  if (localization_mode && pending_relocalization && global_mapping) {
+    glim::EstimationFrame::ConstPtr latest_frame;
+    if (!estimation_frames.empty()) {
+      latest_frame = estimation_frames.back();
+    } else if (!marginalized_frames.empty()) {
+      latest_frame = marginalized_frames.back();
+    }
+
+    if (latest_frame) {
+      spdlog::info("Auto-triggering pending relocalization");
+      global_mapping->relocalize(latest_frame, initial_pose_guess);
+      pending_relocalization = false;
+      spdlog::info("Relocalization triggered with initial pose: [{}, {}, {}]",
+                   initial_pose_guess.translation().x(),
+                   initial_pose_guess.translation().y(),
+                   initial_pose_guess.translation().z());
+    }
+  }
 
   if (sub_mapping) {
     for (const auto &frame : marginalized_frames) {
@@ -403,6 +537,240 @@ void GlimROS::wait(bool auto_quit) {
 void GlimROS::save(const std::string &path) {
   if (global_mapping)
     global_mapping->save(path);
+}
+
+void GlimROS::relocalization_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response>      response) {
+
+  if (!localization_mode) {
+    response->success = false;
+    response->message = "Not in localization mode";
+    spdlog::warn("Relocalization service called but not in localization mode");
+    return;
+  }
+
+  if (!global_mapping) {
+    response->success = false;
+    response->message = "Global mapping not initialized";
+    spdlog::error("Relocalization failed: global mapping not initialized");
+    return;
+  }
+
+  // Get latest estimation frame
+  std::vector<glim::EstimationFrame::ConstPtr> estimation_frames;
+  std::vector<glim::EstimationFrame::ConstPtr> marginalized_frames;
+  odometry_estimation->get_results(estimation_frames, marginalized_frames);
+
+  // Try estimation frames first, fallback to marginalized frames
+  glim::EstimationFrame::ConstPtr latest_frame;
+  if (!estimation_frames.empty()) {
+    latest_frame = estimation_frames.back();
+  } else if (!marginalized_frames.empty()) {
+    latest_frame = marginalized_frames.back();
+    spdlog::info("Using marginalized frame for relocalization");
+  }
+
+  if (!latest_frame) {
+    // No frames available yet - mark as pending
+    pending_relocalization = true;
+    response->success      = true; // Still success, will trigger later
+    response->message =
+        "No frames available yet. Relocalization will trigger automatically "
+        "when data arrives.";
+    spdlog::warn(
+        "No estimation frames available yet. Relocalization marked as "
+        "pending.");
+    return;
+  }
+
+  spdlog::info("Triggering relocalization with initial pose:");
+  spdlog::info("  Position: [{}, {}, {}]", initial_pose_guess.translation().x(),
+               initial_pose_guess.translation().y(),
+               initial_pose_guess.translation().z());
+
+  // Trigger relocalization in global mapping
+  global_mapping->relocalize(latest_frame, initial_pose_guess);
+  pending_relocalization = false;
+
+  response->success = true;
+  response->message = "Relocalization triggered successfully";
+  spdlog::info("Relocalization triggered");
+}
+
+void GlimROS::initial_pose_callback(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+
+  if (!localization_mode) {
+    spdlog::warn("Received initial pose but not in localization mode");
+    return;
+  }
+
+  // Convert ROS pose to Eigen::Isometry3d
+  initial_pose_guess = Eigen::Isometry3d::Identity();
+  initial_pose_guess.translation() =
+      Eigen::Vector3d(msg->pose.pose.position.x, msg->pose.pose.position.y,
+                      msg->pose.pose.position.z);
+
+  Eigen::Quaterniond q(
+      msg->pose.pose.orientation.w, msg->pose.pose.orientation.x,
+      msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
+  initial_pose_guess.linear() = q.toRotationMatrix();
+
+  spdlog::info("Received initial pose from /initialpose:");
+  spdlog::info("  Position: [{}, {}, {}]", initial_pose_guess.translation().x(),
+               initial_pose_guess.translation().y(),
+               initial_pose_guess.translation().z());
+
+  // Automatically trigger relocalization when initial pose is set
+  if (global_mapping) {
+    std::vector<glim::EstimationFrame::ConstPtr> estimation_frames;
+    std::vector<glim::EstimationFrame::ConstPtr> marginalized_frames;
+    odometry_estimation->get_results(estimation_frames, marginalized_frames);
+
+    // Try estimation frames first, fallback to marginalized frames
+    glim::EstimationFrame::ConstPtr latest_frame;
+    if (!estimation_frames.empty()) {
+      latest_frame = estimation_frames.back();
+    } else if (!marginalized_frames.empty()) {
+      latest_frame = marginalized_frames.back();
+      spdlog::info("Using marginalized frame for relocalization");
+    }
+
+    if (latest_frame) {
+      global_mapping->relocalize(latest_frame, initial_pose_guess);
+      pending_relocalization = false;
+      spdlog::info("Auto-triggered relocalization from /initialpose");
+    } else {
+      pending_relocalization = true;
+      spdlog::warn(
+          "Initial pose received but no estimation frames available yet");
+      spdlog::warn(
+          "Relocalization will trigger automatically when sensor data arrives");
+    }
+  }
+}
+
+// ============================================================
+// ViewerCallbacks Handlers
+// ============================================================
+
+void GlimROS::on_viewer_user_event(int pose_id) {
+  spdlog::info("ViewerCallback: user_event triggered with pose_id={}", pose_id);
+
+  // This callback is triggered when user clicks "Loc Save Pose" button in
+  // viewer pose_id ranges from 0-9 indicating which pose slot to save
+
+  if (!localization_mode) {
+    spdlog::warn("User event received but not in localization mode");
+    return;
+  }
+
+  // Get current estimated pose
+  std::vector<glim::EstimationFrame::ConstPtr> estimation_frames;
+  std::vector<glim::EstimationFrame::ConstPtr> marginalized_frames;
+  odometry_estimation->get_results(estimation_frames, marginalized_frames);
+
+  if (estimation_frames.empty()) {
+    spdlog::warn("No estimation frames available to save");
+    return;
+  }
+
+  auto                    latest_frame = estimation_frames.back();
+  const Eigen::Isometry3d pose         = latest_frame->T_world_sensor();
+
+  spdlog::info("Saved pose {} at position: [{}, {}, {}]", pose_id,
+               pose.translation().x(), pose.translation().y(),
+               pose.translation().z());
+
+  // TODO: You can extend this to:
+  // - Publish saved poses to a ROS topic
+  // - Store poses for later retrieval
+  // - Create markers for visualization
+}
+
+void GlimROS::on_viewer_load_map() {
+  spdlog::info("ViewerCallback: on_load_map triggered");
+
+  // This callback is triggered when user clicks "Load Map" button in viewer
+
+  if (!localization_mode) {
+    spdlog::warn("Load map requested but not in localization mode");
+    return;
+  }
+
+  // In localization mode, map is already loaded during initialization
+  // This callback could be used to:
+  // - Reload the map
+  // - Load a different map
+  // - Refresh map visualization
+
+  spdlog::info("Map already loaded in localization mode");
+
+  // TODO: You can extend this to:
+  // - Add a ROS service to dynamically load maps
+  // - Reload the current map
+  // - Switch between different maps
+}
+
+void GlimROS::on_viewer_request_relocalize(const Eigen::Vector3d &pos) {
+  spdlog::info(
+      "ViewerCallback: request_relocalize triggered at position: [{}, {}, {}]",
+      pos.x(), pos.y(), pos.z());
+
+  // This callback is triggered when user right-clicks on a point in the viewer
+  // and selects "Relocalize here"
+
+  if (!localization_mode) {
+    spdlog::warn("Relocalization requested but not in localization mode");
+    return;
+  }
+
+  if (!global_mapping) {
+    spdlog::error("Global mapping not initialized");
+    return;
+  }
+
+  // Create initial pose guess from clicked position
+  // Use identity rotation (could be improved with more sophisticated guessing)
+  Eigen::Isometry3d initial_pose = Eigen::Isometry3d::Identity();
+  initial_pose.translation()     = pos;
+
+  // Update the stored initial pose guess
+  initial_pose_guess = initial_pose;
+
+  spdlog::info("Initial pose set from viewer at position: [{}, {}, {}]",
+               pos.x(), pos.y(), pos.z());
+
+  // Get latest estimation frame
+  std::vector<glim::EstimationFrame::ConstPtr> estimation_frames;
+  std::vector<glim::EstimationFrame::ConstPtr> marginalized_frames;
+  odometry_estimation->get_results(estimation_frames, marginalized_frames);
+
+  // Try to use estimation frames first, fallback to marginalized frames
+  glim::EstimationFrame::ConstPtr latest_frame;
+  if (!estimation_frames.empty()) {
+    latest_frame = estimation_frames.back();
+  } else if (!marginalized_frames.empty()) {
+    latest_frame = marginalized_frames.back();
+    spdlog::info("Using marginalized frame for relocalization");
+  }
+
+  if (latest_frame) {
+    // Trigger relocalization immediately if we have frames
+    global_mapping->relocalize(latest_frame, initial_pose);
+    pending_relocalization = false;
+    spdlog::info(
+        "Relocalization triggered from viewer at position: [{}, {}, {}]",
+        pos.x(), pos.y(), pos.z());
+  } else {
+    // No frames available yet - will auto-trigger when first frame arrives
+    pending_relocalization = true;
+    spdlog::warn("No estimation frames available yet. Initial pose saved.");
+    spdlog::warn(
+        "Relocalization will be triggered automatically when sensor data "
+        "arrives.");
+  }
 }
 
 } // namespace glim
